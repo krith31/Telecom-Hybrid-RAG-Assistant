@@ -1,0 +1,25 @@
+# Environments
+.env
+TeleCom/
+venv/
+env/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+
+# Data and Vector Store
+data/
+!data/.gitkeep
+chroma_db/
+*.db
+*.sqlite
+
+# OS Files
+.DS_Store
+Thumbs.db
+
+# IDEs
+.idea/
+.vscode/
