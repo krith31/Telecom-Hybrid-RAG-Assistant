@@ -1,0 +1,79 @@
+"""Create silver question/reference pairs from the actual source chunks."""
+import argparse
+import json
+from pathlib import Path
+import random
+from pydantic import BaseModel, ConfigDict, Field
+from .capture import write_json
+from .judge import Judge, evaluation_prompt
+
+class SourceQuestion(BaseModel):
+    model_config=ConfigDict(extra="forbid")
+    question: str=Field(min_length=10)
+    reference_answer: str=Field(min_length=10)
+    evidence_quote: str=Field(min_length=10)
+
+def build_benchmark(chunks, output, count=20, seed=31, model="gemini-2.5-flash", client=None):
+    if count<1:
+        raise ValueError("count must be positive")
+    if not isinstance(chunks,list) or not chunks:
+        raise ValueError("Chunks must be a nonempty JSON list")
+    ids=[c.get("id") for c in chunks if isinstance(c,dict)]
+    if len(ids)!=len(chunks) or any(not isinstance(x,str) or not x for x in ids):
+        raise ValueError("Every chunk needs a nonempty string id")
+    if len(set(ids))!=len(ids):
+        raise ValueError("Duplicate chunk IDs; make IDs globally unique and rebuild the index first")
+    candidates=[c for c in chunks if isinstance(c.get("content"),str) and len(c["content"].strip())>=80]
+    if len(candidates)<count:
+        raise ValueError(f"Need {count} source chunks of at least 80 characters; found {len(candidates)}")
+    random.Random(seed).shuffle(candidates)
+    judge=Judge(model,client)
+    records=[]; failures=[]
+    for chunk in candidates:
+        if len(records)>=count:
+            break
+        prompt=evaluation_prompt(
+            "Create one clear telecom question and a concise reference answer fully entailed by this source. "
+            "Do not ask for unstated facts or an answer outside this source. Include an exact contiguous "
+            "evidence_quote copied from the source, supporting the answer. "
+            "Return question, reference_answer, evidence_quote. No outside knowledge.",source=chunk["content"])
+        try:
+            item=judge.call(prompt,SourceQuestion,SourceQuestion.model_validate)
+            if item.evidence_quote not in chunk["content"]:
+                raise ValueError("Evidence quote is absent from source")
+            if any(r["question"].casefold()==item.question.casefold() for r in records):
+                raise ValueError("Duplicate generated question")
+            records.append({"id":f"SILVER_{len(records)+1:03d}",**item.model_dump(),
+                            "relevant_doc_ids":[chunk["id"]],"reference_source":"synthetic_from_corpus",
+                            "reference_reviewed":False,"expected_abstention":False,
+                            "source_metadata":chunk.get("metadata",{}),"generator_model":model,"seed":seed,
+                            "label_limitations":"Reference needs review; relevant IDs are known positives, not exhaustive."})
+        except Exception as error:
+            failures.append({"chunk_id":chunk["id"],"error":type(error).__name__})
+        write_json(output,records)
+        write_json(str(output)+".build.json",{"requested":count,"generated":len(records),"failures":failures,
+                                            "model":model,"seed":seed,"label_type":"silver"})
+    if len(records)<count:
+        raise RuntimeError(f"Only {len(records)}/{count} questions generated; partial output and failures saved")
+    return records
+
+def main():
+    parser=argparse.ArgumentParser(description=__doc__)
+    root=Path(__file__).resolve().parents[1]
+    parser.add_argument("--chunks",type=Path,default=root/"data/chunks/vector_chunks.json")
+    parser.add_argument("--output",type=Path,default=root/"evals/corpus_benchmark.json")
+    parser.add_argument("--count",type=int,default=20)
+    parser.add_argument("--seed",type=int,default=31)
+    parser.add_argument("--model",default="gemini-2.5-flash")
+    args=parser.parse_args()
+    try:
+        from dotenv import load_dotenv
+        load_dotenv(root/".env")
+    except ImportError:
+        pass
+    chunks=json.loads(args.chunks.read_text(encoding="utf-8"))
+    records=build_benchmark(chunks,args.output,args.count,args.seed,args.model)
+    print(f"Saved {len(records)} silver questions to {args.output}")
+
+if __name__=="__main__":
+    main()
