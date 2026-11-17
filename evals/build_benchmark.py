@@ -5,7 +5,7 @@ from pathlib import Path
 import random
 from pydantic import BaseModel, ConfigDict, Field
 from .capture import write_json
-from .judge import Judge, evaluation_prompt
+from .judge import Judge, evaluation_prompt, safe_api_error
 
 class SourceQuestion(BaseModel):
     model_config=ConfigDict(extra="forbid")
@@ -13,7 +13,7 @@ class SourceQuestion(BaseModel):
     reference_answer: str=Field(min_length=10)
     evidence_quote: str=Field(min_length=10)
 
-def build_benchmark(chunks, output, count=20, seed=31, model="gemini-2.5-flash", client=None):
+def build_benchmark(chunks, output, count=20, seed=31, model="gemini-2.5-flash", client=None, existing=None):
     if count<1:
         raise ValueError("count must be positive")
     if not isinstance(chunks,list) or not chunks:
@@ -29,13 +29,33 @@ def build_benchmark(chunks, output, count=20, seed=31, model="gemini-2.5-flash",
     random.Random(seed).shuffle(candidates)
     judge=Judge(model,client)
     records=[]; failures=[]
+    if existing is not None:
+        if not isinstance(existing,list) or len(existing)>count:
+            raise ValueError("Resumed benchmark must be a list no longer than requested samples")
+        seen_ids=set();seen_questions=set()
+        for record in existing:
+            SourceQuestion.model_validate({key:record.get(key) for key in SourceQuestion.model_fields})
+            if record.get("id") in seen_ids or record["question"].casefold() in seen_questions:
+                raise ValueError("Resumed benchmark has duplicate IDs or questions")
+            relevant=record.get("relevant_doc_ids")
+            if not relevant or any(id_ not in ids for id_ in relevant):
+                raise ValueError("Resumed benchmark references a different corpus")
+            if record.get("reference_source")!="synthetic_from_corpus":
+                raise ValueError("Resume expects the generated corpus benchmark")
+            seen_ids.add(record.get("id"));seen_questions.add(record["question"].casefold())
+            records.append(record)
+        print(f"Resuming benchmark: {len(records)}/{count} accepted questions already saved",flush=True)
     def checkpoint():
         write_json(output,records)
         write_json(str(output)+".build.json",{"requested":count,"generated":len(records),"failures":failures,
                                             "model":model,"seed":seed,"label_type":"silver"})
+    checkpoint()
+    used={id_ for record in records for id_ in record.get("relevant_doc_ids",[])}
     for chunk in candidates:
         if len(records)>=count:
             break
+        if chunk["id"] in used:
+            continue
         prompt=evaluation_prompt(
             "Create one clear telecom question and a concise reference answer fully entailed by this source. "
             "Do not ask for unstated facts or an answer outside this source. Include an exact contiguous "
@@ -47,7 +67,10 @@ def build_benchmark(chunks, output, count=20, seed=31, model="gemini-2.5-flash",
                 raise ValueError("Evidence quote is absent from source")
             if any(r["question"].casefold()==item.question.casefold() for r in records):
                 raise ValueError("Duplicate generated question")
-            records.append({"id":f"SILVER_{len(records)+1:03d}",**item.model_dump(),
+            next_id=len(records)+1
+            while f"SILVER_{next_id:03d}" in {r["id"] for r in records}:
+                next_id+=1
+            records.append({"id":f"SILVER_{next_id:03d}",**item.model_dump(),
                             "relevant_doc_ids":[chunk["id"]],"reference_source":"synthetic_from_corpus",
                             "reference_reviewed":False,"expected_abstention":False,
                             "source_metadata":chunk.get("metadata",{}),"generator_model":model,"seed":seed,
@@ -55,7 +78,8 @@ def build_benchmark(chunks, output, count=20, seed=31, model="gemini-2.5-flash",
         except Exception as error:
             code=getattr(error,"code",getattr(error,"status_code",None))
             failures.append({"chunk_id":chunk["id"],"error":type(error).__name__,
-                             "api_code":code if isinstance(code,int) else None})
+                             "api_code":code if isinstance(code,int) else None,
+                             "detail":safe_api_error(error)["message"]})
             checkpoint()
             # Retrying a different source cannot fix a rejected API request.
             # Judge.call already performed bounded retries for transient errors.
