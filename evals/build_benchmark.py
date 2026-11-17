@@ -29,6 +29,10 @@ def build_benchmark(chunks, output, count=20, seed=31, model="gemini-2.5-flash",
     random.Random(seed).shuffle(candidates)
     judge=Judge(model,client)
     records=[]; failures=[]
+    def checkpoint():
+        write_json(output,records)
+        write_json(str(output)+".build.json",{"requested":count,"generated":len(records),"failures":failures,
+                                            "model":model,"seed":seed,"label_type":"silver"})
     for chunk in candidates:
         if len(records)>=count:
             break
@@ -49,10 +53,18 @@ def build_benchmark(chunks, output, count=20, seed=31, model="gemini-2.5-flash",
                             "source_metadata":chunk.get("metadata",{}),"generator_model":model,"seed":seed,
                             "label_limitations":"Reference needs review; relevant IDs are known positives, not exhaustive."})
         except Exception as error:
-            failures.append({"chunk_id":chunk["id"],"error":type(error).__name__})
-        write_json(output,records)
-        write_json(str(output)+".build.json",{"requested":count,"generated":len(records),"failures":failures,
-                                            "model":model,"seed":seed,"label_type":"silver"})
+            code=getattr(error,"code",getattr(error,"status_code",None))
+            failures.append({"chunk_id":chunk["id"],"error":type(error).__name__,
+                             "api_code":code if isinstance(code,int) else None})
+            checkpoint()
+            # Retrying a different source cannot fix a rejected API request.
+            # Judge.call already performed bounded retries for transient errors.
+            if code is not None or not isinstance(error,(ValueError,TypeError)):
+                raise RuntimeError(f"Benchmark API request failed ({type(error).__name__}, HTTP {code}); stopped. Partial output saved.") from error
+            if len(failures)>=max(5,count*3):
+                raise RuntimeError("Benchmark validation failure limit reached; partial output saved.") from error
+        checkpoint()
+        print(f"Benchmark questions: {len(records)}/{count}; rejected candidates: {len(failures)}",flush=True)
     if len(records)<count:
         raise RuntimeError(f"Only {len(records)}/{count} questions generated; partial output and failures saved")
     return records
@@ -77,3 +89,4 @@ def main():
 
 if __name__=="__main__":
     main()
+
