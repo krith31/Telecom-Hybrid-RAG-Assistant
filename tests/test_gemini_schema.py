@@ -4,13 +4,51 @@ from pathlib import Path
 from types import SimpleNamespace
 import tempfile
 import unittest
+from unittest.mock import patch
 from pydantic import TypeAdapter, ValidationError
 from evals.build_benchmark import SourceQuestion, build_benchmark
-from evals.judge import Judge, gemini_response_schema
+from evals.judge import Judge, gemini_response_schema, safe_api_error
 from evals.result_faithfulness import ClaimVerification
 
 
 class SchemaTests(unittest.TestCase):
+    def test_pacing_is_shared_between_judge_instances(self):
+        sleeps=[]
+        with patch("evals.judge._NEXT_REQUEST",0),patch("evals.judge.time.monotonic",return_value=100):
+            Judge(interval=15,sleep=sleeps.append).pace()
+            Judge(interval=15,sleep=sleeps.append).pace()
+        self.assertEqual(sleeps,[15])
+
+    def test_error_details_redact_key_and_preserve_quota_reason(self):
+        class APIError(Exception):
+            code=429
+        error=APIError("Quota exhausted for api-secret Bearer another-secret")
+        with patch.dict("os.environ",{"GOOGLE_API_KEY":"api-secret"}):
+            detail=safe_api_error(error)
+        self.assertEqual(detail["api_code"],429)
+        self.assertNotIn("api-secret",detail["message"])
+        self.assertNotIn("another-secret",detail["message"])
+        self.assertIn("Quota exhausted",detail["message"])
+
+    def test_resume_preserves_existing_and_only_generates_remainder(self):
+        existing={"id":"SILVER_001","question":"What does the first source describe?",
+                  "reference_answer":"A telecom source description.","evidence_quote":"Telecom first evidence.",
+                  "relevant_doc_ids":["a"],"reference_source":"synthetic_from_corpus"}
+        calls=[]
+        source="Telecom second evidence. "*8
+        def generate(**kwargs):
+            calls.append(kwargs)
+            return SimpleNamespace(text=json.dumps({"question":"What does the second source describe?",
+                "reference_answer":"The second telecom source.","evidence_quote":"Telecom second evidence."}))
+        client=SimpleNamespace(models=SimpleNamespace(generate_content=generate))
+        chunks=[{"id":"a","content":"Telecom first evidence. "*8},{"id":"b","content":source}]
+        with tempfile.TemporaryDirectory() as td:
+            records=build_benchmark(chunks,Path(td)/"benchmark.json",count=2,client=client,existing=[existing])
+        self.assertEqual(records[0],existing)
+        self.assertEqual(len(calls),1)
+        self.assertEqual(records[1]["id"],"SILVER_002")
+        self.assertEqual(records[1]["relevant_doc_ids"],["b"])
+
     def test_strict_constraints_stay_local(self):
         wire=gemini_response_schema(SourceQuestion)
         self.assertNotIn("additionalProperties",wire)
