@@ -14,7 +14,7 @@ from .result_faithfulness import FaithfulnessEvaluator
 from .metrics import citation_validity, retrieval_metrics
 from .schema import CapturedAnswer
 
-def evaluate_records(records, judge_model="gemini-2.5-flash", client=None, k=3, checkpoint=None):
+def evaluate_records(records, judge_model="gemini-3.8-flash", client=None, k=3, checkpoint=None):
     if not isinstance(records,list) or not records:
         raise ValueError("No records to evaluate")
     judges = {"faithfulness":FaithfulnessEvaluator(judge_model,client),
@@ -151,7 +151,7 @@ def main():
     source.add_argument("--questions",type=Path,default=None)
     source.add_argument("--dataset",type=Path,help="Score captured outputs without generating again")
     parser.add_argument("--output",type=Path,default=root/"outputs/rag_evaluation")
-    parser.add_argument("--judge-model",default="gemini-2.5-flash")
+    parser.add_argument("--judge-model",default="gemini-3.8-flash")
     parser.add_argument("--limit",type=int,default=20)
     parser.add_argument("--top-k",type=int,default=3)
     args=parser.parse_args()

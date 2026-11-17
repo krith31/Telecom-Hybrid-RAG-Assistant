@@ -18,7 +18,7 @@ class AccuracyEvaluator:
     If a reference_answer is provided, it compares the generated answer against the reference.
     If no reference_answer is provided, it acts as an Answer Relevance evaluator (does the answer address the question?).
     """
-    def __init__(self, model_name: str = "gemini-2.5-flash"):
+    def __init__(self, model_name: str = "gemini-3.8-flash"):
         self.client = genai.Client()
         self.model_name = model_name
 

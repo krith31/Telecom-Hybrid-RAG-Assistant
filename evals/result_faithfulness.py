@@ -16,7 +16,7 @@ class FaithfulnessResult(BaseModel):
     error: Optional[str] = None
 
 class FaithfulnessEvaluator:
-    def __init__(self, model_name="gemini-2.5-flash", client=None, max_attempts=3):
+    def __init__(self, model_name="gemini-3.8-flash", client=None, max_attempts=3):
         self.judge = Judge(model_name, client, max_attempts)
 
     def evaluate(self, generated_answer: str, retrieved_context: str) -> FaithfulnessResult:

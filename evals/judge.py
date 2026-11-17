@@ -67,7 +67,7 @@ def gemini_response_schema(schema):
     return convert(raw)
 
 class Judge:
-    def __init__(self, model_name="gemini-2.5-flash", client=None, max_attempts=3, sleep=time.sleep, interval=None):
+    def __init__(self, model_name="gemini-3.8-flash", client=None, max_attempts=3, sleep=time.sleep, interval=None):
         if not 1 <= max_attempts <= 5:
             raise ValueError("max_attempts must be between 1 and 5")
         self.model_name, self.client = model_name, client

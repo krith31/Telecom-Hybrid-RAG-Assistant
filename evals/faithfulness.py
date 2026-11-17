@@ -22,7 +22,7 @@ class FaithfulnessEvaluator:
     Evaluates whether the generated answer is strictly supported by the retrieved context.
     Penalizes hallucinations.
     """
-    def __init__(self, model_name: str = "gemini-2.5-flash"):
+    def __init__(self, model_name: str = "gemini-3.8-flash"):
         # Relies on GOOGLE_API_KEY being set in the environment
         self.client = genai.Client()
         self.model_name = model_name

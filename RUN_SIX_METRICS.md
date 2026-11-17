@@ -6,7 +6,7 @@ This evaluates RAG retrieval and answer generation. It does not run or evaluate 
 
 ## What is needed
 
-- A Gemini API key, used for benchmark generation and LLM judging.
+- A Gemini API key with access and available quota for `gemini-3.8-flash`, used for benchmark generation and LLM judging.
 - Your source documents, chunk JSON, or an already populated `telecom_specs` collection.
 - Installed embedding/reranking dependencies and access to their BGE model weights, either cached or downloadable.
 - For the original expert backend: its running OpenAI-compatible endpoint and the correct model ID.
@@ -61,6 +61,22 @@ Raw-source ingestion preserves DOCX table order, uses globally unique source/sec
 With no source flags, the runner reads the selected existing collection, preserving the exact IDs used for relevance labeling. It does not require a separate exported corpus file. Use `--collection NAME` for a non-default populated collection.
 
 The original expert's system prompt, temperature 0.2, and 512-token generation budget are preserved. The actual answer sees `--context-k` chunks (default 3). `--depth` controls how many ranked chunks are retrieved and reranked for MRR. In the existing pipeline, increasing depth also enlarges the dense/hybrid candidate pool; this can affect the top chunks. Record the parameters when comparing experiments.
+
+## Gemini 3.8 Flash and saved work
+
+All evaluation entry points default to the API model ID `gemini-3.8-flash`. This includes benchmark generation, answer judging and the optional Gemini answer generator. Model flags remain available for explicit overrides. The expert backend still uses the model advertised by its OpenAI-compatible server.
+
+To evaluate 10 existing questions without repeating indexing or question generation:
+
+```sh
+python -m evals.complete --collection YOUR_SAVED_COLLECTION --questions outputs/YOUR_SAVED_RUN/benchmark.json --ask-key --samples 10 --judge-model gemini-3.8-flash
+```
+
+To finish a partially generated benchmark, use `--resume-benchmark outputs/YOUR_SAVED_RUN/benchmark.json` instead of `--questions`. Existing question records retain the model that created them; a new judge does not relabel old references as newly generated.
+
+Judge calls are paced across evaluators, with a default minimum interval of 15 seconds. Set `EVAL_JUDGE_INTERVAL_SECONDS` between 0 and 60 to match the project's rate limits. Exhausted daily or project quota still requires available quota; switching the model name does not guarantee access. API failures show a status and redacted reason, and benchmark creation stops after bounded retries.
+
+Model ID reference: https://ai.google.dev/gemini-api/docs/models/gemini-3.8-flash
 
 ## One Gemini key, with Gemini answer generation
 

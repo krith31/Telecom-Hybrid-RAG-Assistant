@@ -8,7 +8,7 @@ class GeneratedAnswer(BaseModel):
 
 
 class GeminiGenerator:
-    def __init__(self,model="gemini-2.5-flash",client=None):
+    def __init__(self,model="gemini-3.8-flash",client=None):
         self.judge=Judge(model,client)
 
     def __call__(self,prompt):

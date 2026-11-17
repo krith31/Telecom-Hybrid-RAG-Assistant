@@ -13,7 +13,7 @@ class SourceQuestion(BaseModel):
     reference_answer: str=Field(min_length=10)
     evidence_quote: str=Field(min_length=10)
 
-def build_benchmark(chunks, output, count=20, seed=31, model="gemini-2.5-flash", client=None, existing=None):
+def build_benchmark(chunks, output, count=20, seed=31, model="gemini-3.8-flash", client=None, existing=None):
     if count<1:
         raise ValueError("count must be positive")
     if not isinstance(chunks,list) or not chunks:
@@ -100,7 +100,7 @@ def main():
     parser.add_argument("--output",type=Path,default=root/"evals/corpus_benchmark.json")
     parser.add_argument("--count",type=int,default=20)
     parser.add_argument("--seed",type=int,default=31)
-    parser.add_argument("--model",default="gemini-2.5-flash")
+    parser.add_argument("--model",default="gemini-3.8-flash")
     args=parser.parse_args()
     try:
         from dotenv import load_dotenv

@@ -27,7 +27,7 @@ def retrieval_scores(ids, relevant_ids, k, depth):
 
 
 def evaluate_six(records, k=3, depth=20, correctness_threshold=1.0,
-                 judge_model="gemini-2.5-flash", client=None, checkpoint=None):
+                 judge_model="gemini-3.8-flash", client=None, checkpoint=None):
     if not isinstance(records,list) or not records:
         raise ValueError("Need a nonempty list of captured pipeline outputs")
     if k<1 or depth<k or not 0<correctness_threshold<=1:

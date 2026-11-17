@@ -20,7 +20,7 @@ class ContextJudgment(BaseModel):
     reference_claims: list[EvidenceDecision]
 
 class ContextQualityEvaluator:
-    def __init__(self, model_name="gemini-2.5-flash", client=None):
+    def __init__(self, model_name="gemini-3.8-flash", client=None):
         self.judge = Judge(model_name,client)
 
     def evaluate(self, question, chunks, reference=None):
@@ -55,7 +55,7 @@ class BehaviorJudgment(BaseModel):
     reasoning: str = Field(min_length=1)
 
 class BehaviorEvaluator:
-    def __init__(self, model_name="gemini-2.5-flash", client=None):
+    def __init__(self, model_name="gemini-3.8-flash", client=None):
         self.judge = Judge(model_name,client)
 
     def evaluate(self, question, answer, chunks, expected_abstention=None):
