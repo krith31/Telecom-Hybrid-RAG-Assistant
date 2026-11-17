@@ -16,8 +16,9 @@ class FaithfulnessResult(BaseModel):
     error: Optional[str] = None
 
 class FaithfulnessEvaluator:
-    def __init__(self, model_name="gemini-3.8-flash", client=None, max_attempts=3):
+    def __init__(self, model_name="gemini-3.8-flash", client=None, max_attempts=3, raise_errors=False):
         self.judge = Judge(model_name, client, max_attempts)
+        self.raise_errors = raise_errors
 
     def evaluate(self, generated_answer: str, retrieved_context: str) -> FaithfulnessResult:
         if not generated_answer.strip():
@@ -36,4 +37,7 @@ class FaithfulnessEvaluator:
             return FaithfulnessResult(status="ok", score=sum(c.is_supported for c in claims)/len(claims),
                                       verifications=claims)
         except Exception as error:
+            if self.raise_errors:
+                raise
             return FaithfulnessResult(status="error", error=type(error).__name__)
+

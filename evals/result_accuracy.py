@@ -16,8 +16,9 @@ class AccuracyResult(BaseModel):
     error: Optional[str] = None
 
 class AccuracyEvaluator:
-    def __init__(self, model_name="gemini-3.8-flash", client=None, max_attempts=3):
+    def __init__(self, model_name="gemini-3.8-flash", client=None, max_attempts=3, raise_errors=False):
         self.judge = Judge(model_name, client, max_attempts)
+        self.raise_errors = raise_errors
 
     def evaluate(self, question, generated_answer, reference_answer=None):
         metric = "answer_correctness" if reference_answer and reference_answer.strip() else "answer_relevance"
@@ -33,4 +34,7 @@ class AccuracyEvaluator:
             result = self.judge.call(prompt, JudgeScore, JudgeScore.model_validate)
             return AccuracyResult(metric=metric, status="ok", **result.model_dump())
         except Exception as error:
+            if self.raise_errors:
+                raise
             return AccuracyResult(metric=metric, status="error", error=type(error).__name__)
+

@@ -88,6 +88,18 @@ This still uses your real BGE/BM25/cross-encoder retrieval pipeline; Gemini repl
 
 ## How the labeled benchmark is made
 
+### Retry scoring from saved answers
+
+If answers are already captured in a run's `traces.json`, run the same six metrics without indexing, retrieval, benchmark generation, or calls to the expert server:
+
+```sh
+python -m evals.rescore --dataset outputs/YOUR_SAVED_RUN/traces.json --ask-key --judge-model gemini-3-flash-preview --samples 10
+```
+
+The command writes a new `outputs/rescore_*` report and preserves the saved answers. It inherits retrieval settings and generator identity from the source run manifest. Judgments are checkpointed between metrics, and progress names each current question and metric. Persistent judge errors stop scoring after bounded retries and preserve the checkpoint and redacted failure reason. Missing judge scores remain unmeasured with explicit coverage.
+
+The default judge request timeout is 180 seconds, configurable through `EVAL_JUDGE_TIMEOUT_SECONDS` (1 to 600). Gemini 3 Flash judges use low thinking to limit latency. Server errors use bounded 15/30-second backoff and quota errors use bounded 60-second backoff. These settings do not guarantee recovery from provider outages or restore exhausted quota.
+
 By default the runner samples your indexed chunks with a fixed seed and creates question/reference pairs grounded in them. It verifies each quoted evidence span occurs verbatim in its source and saves the source ID as a known positive relevance label. At least the requested number of source chunks of 80 or more characters must be available; otherwise choose fewer `--samples` or supply more source material.
 
 These references and labels are **synthetic silver labels**, not human-verified ground truth. A valid source quote does not prove every reference claim is correct. Known positive IDs may omit other relevant chunks. Review the saved `benchmark.json`, add other relevant IDs and correct references before using scores as reviewed benchmark results. Same-model benchmark generation and judging can introduce correlated bias, and source-derived questions favor single-passage answers. The report preserves reference provenance.
@@ -150,3 +162,4 @@ Run tests:
 ```sh
 python -m unittest discover -s tests -v
 ```
+

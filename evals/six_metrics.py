@@ -7,6 +7,7 @@ from .capture import write_json
 from .result_accuracy import AccuracyEvaluator
 from .result_faithfulness import FaithfulnessEvaluator
 from .schema import CapturedAnswer
+from .judge import safe_api_error
 
 METRICS = ("MRR", "Top-k Accuracy", "Accuracy", "Recall", "Relevance", "Faithfulness")
 
@@ -27,15 +28,16 @@ def retrieval_scores(ids, relevant_ids, k, depth):
 
 
 def evaluate_six(records, k=3, depth=20, correctness_threshold=1.0,
-                 judge_model="gemini-3.8-flash", client=None, checkpoint=None):
+                 judge_model="gemini-3.8-flash", client=None, checkpoint=None, fail_fast=False):
     if not isinstance(records,list) or not records:
         raise ValueError("Need a nonempty list of captured pipeline outputs")
     if k<1 or depth<k or not 0<correctness_threshold<=1:
         raise ValueError("Require 1 <= k <= depth and 0 < correctness_threshold <= 1")
-    faith=FaithfulnessEvaluator(judge_model,client)
-    answer_judge=AccuracyEvaluator(judge_model,client)
+    faith=FaithfulnessEvaluator(judge_model,client,raise_errors=fail_fast)
+    answer_judge=AccuracyEvaluator(judge_model,client,raise_errors=fail_fast)
     results=[]
     for index,record in enumerate(records):
+        failure=None
         row={"id":str(index),"status":"invalid_record","question":"",
              "metrics":dict.fromkeys(METRICS),"judgments":{}}
         try:
@@ -48,12 +50,20 @@ def evaluate_six(records, k=3, depth=20, correctness_threshold=1.0,
             if data["status"] in ("ok","generation_error","invalid_output"):
                 row["metrics"].update(retrieval_scores(row["retrieved_doc_ids"],data["relevant_doc_ids"],k,depth))
             if data["status"]=="ok" and data["question"].strip():
+                print(f"Scoring {index+1}/{len(records)}: faithfulness",flush=True)
                 f=faith.evaluate(data["generated_answer"],data["retrieved_context"]).model_dump()
-                r=answer_judge.evaluate(data["question"],data["generated_answer"]).model_dump()
-                row["judgments"].update(faithfulness=f,relevance=r)
+                row["judgments"]["faithfulness"]=f
                 row["metrics"]["Faithfulness"]=f["score"]
+                if checkpoint:
+                    write_json(checkpoint,results+[row])
+                print(f"Scoring {index+1}/{len(records)}: relevance",flush=True)
+                r=answer_judge.evaluate(data["question"],data["generated_answer"]).model_dump()
+                row["judgments"]["relevance"]=r
                 row["metrics"]["Relevance"]=r["score"]
+                if checkpoint:
+                    write_json(checkpoint,results+[row])
                 if data["reference_answer"] and data["reference_answer"].strip():
+                    print(f"Scoring {index+1}/{len(records)}: accuracy",flush=True)
                     a=answer_judge.evaluate(data["question"],data["generated_answer"],data["reference_answer"]).model_dump()
                     row["judgments"]["accuracy"]=a
                     row["correctness_rating"]=a["score"]
@@ -62,9 +72,16 @@ def evaluate_six(records, k=3, depth=20, correctness_threshold=1.0,
                     row["status"]="empty_answer"
         except Exception as error:
             row["error"]=type(error).__name__
+            if fail_fast:
+                row["error_detail"]=safe_api_error(error)
+                failure=error
         results.append(row)
         if checkpoint:
             write_json(checkpoint,results)
+        measured=sum(value is not None for value in row["metrics"].values())
+        print(f"Scored {index+1}/{len(records)}: {measured}/6 metric values available",flush=True)
+        if failure is not None:
+            raise failure
     definitions={
         "MRR":f"Mean reciprocal rank of first labeled relevant chunk within captured depth {depth}; zero on a labeled miss.",
         "Top-k Accuracy":f"Fraction of labeled questions with a relevant chunk in the first {k} results (Hit@{k}).",
@@ -122,3 +139,4 @@ def export_six(output, results, summary, manifest):
               "Gemini generation evaluates a different generator from the fine-tuned expert. "
               "Router tool selection and anomaly detection are outside this RAG evaluation.", ""]
     (output/"evaluation_report.md").write_text("\n".join(lines),encoding="utf-8")
+
