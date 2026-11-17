@@ -12,7 +12,7 @@ from .build_benchmark import build_benchmark
 from .capture import generate_evaluation_dataset, write_json
 from .corpus import prepare_corpus
 from .generators import GeminiGenerator
-from .judge import Judge
+from .judge import Judge, safe_api_error
 from .six_metrics import evaluate_six, export_six
 
 
@@ -87,9 +87,13 @@ def run_workflow(config,pipeline=None,generator=None,judge_client=None,benchmark
             questions=json.loads(Path(config.questions).read_text(encoding="utf-8"))[:config.samples]
             manifest["benchmark_type"]="supplied"
         else:
+            resumed=getattr(config,"resume_benchmark",None)
+            extra={"existing":json.loads(Path(resumed).read_text(encoding="utf-8"))} if resumed else {}
             questions=benchmark_builder(chunks,output/"benchmark.json",config.samples,
-                                        config.seed,config.benchmark_model,judge_client)
+                                        config.seed,config.benchmark_model,judge_client,**extra)
             manifest["benchmark_type"]="synthetic_from_corpus"
+            if resumed:
+                manifest["resumed_benchmark_questions"]=len(extra["existing"])
         validate_questions(questions,{c["id"] for c in chunks},config.allow_partial)
         write_json(output/"benchmark.json",questions)
         stage("generate_answers")
@@ -121,6 +125,7 @@ def run_workflow(config,pipeline=None,generator=None,judge_client=None,benchmark
     except Exception as error:
         manifest["state"]="failed"
         manifest["error_type"]=type(error).__name__
+        manifest["error_detail"]=safe_api_error(error)
         write_json(output/"run_manifest.json",manifest)
         raise
 
@@ -152,7 +157,9 @@ def main():
     sources.add_argument("--specs",type=Path,help="Ingest .docx/.txt/.md sources into an isolated evaluation collection")
     sources.add_argument("--chunks",type=Path,help="Ingest existing chunk JSON into an isolated evaluation collection")
     parser.add_argument("--collection",default="telecom_specs",help="Existing collection used when neither source flag is supplied")
-    parser.add_argument("--questions",type=Path,help="Optional labeled benchmark; by default create one from the corpus")
+    benchmarks=parser.add_mutually_exclusive_group()
+    benchmarks.add_argument("--questions",type=Path,help="Optional labeled benchmark; by default create one from the corpus")
+    benchmarks.add_argument("--resume-benchmark",type=Path,help="Keep accepted questions from a saved corpus benchmark and generate only the remainder")
     parser.add_argument("--samples",type=int,default=20)
     parser.add_argument("--k",type=int,default=3)
     parser.add_argument("--depth",type=int,default=20,help="Ranked retrieval depth used for MRR")
@@ -195,10 +202,12 @@ def main():
         parser.error("The selected source directory or chunk file does not exist")
     # Authenticate before expensive ingestion; never print the client or the key.
     try:
+        print("Checking Gemini judge access...",flush=True)
         ready=Judge(config.judge_model).call("Return JSON ready=true.",Ready,Ready.model_validate)
         if not ready.ready:
             raise ValueError("Judge preflight failed")
         if config.generation_backend=="expert":
+            print("Checking Kaggle expert endpoint...",flush=True)
             from openai import OpenAI
             client=OpenAI(base_url=os.environ["LOCAL_MODEL_URL"],api_key=os.getenv("LOCAL_MODEL_API_KEY","not-needed"),timeout=30.0,max_retries=0)
             advertised=client.models.list()
@@ -207,9 +216,10 @@ def main():
         summary=run_workflow(config)
     except Exception as error:
         print("Evaluation stopped:",type(error).__name__)
-        if isinstance(error,(ValueError,FileNotFoundError)):
-            print(str(error))
-        print("Inspect run_manifest.json if created. API error payloads are deliberately not printed.")
+        detail=safe_api_error(error)
+        print("HTTP status:",detail["api_code"])
+        print("Reason:",detail["message"])
+        print("Inspect run_manifest.json if created. Known API keys are redacted.")
         return 1
     for metric,result in summary["metrics"].items():
         value=f"{result['value']:.4f}" if result["value"] is not None else "Unmeasured"
@@ -220,3 +230,4 @@ def main():
 
 if __name__=="__main__":
     raise SystemExit(main())
+
